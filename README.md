@@ -63,7 +63,7 @@ Error responses are typed:
 ## Resilience + Observability
 
 - timeout and retry/backoff around upstream calls
-- upstream schema normalization and validation
+- upstream schema normalization and validation (supports canonical OHLCV, aliased OHLC fields, and price-only fallback mapping)
 - controlled service errors for upstream failures and invalid data
 - JSON structured logs to stdout/stderr
 

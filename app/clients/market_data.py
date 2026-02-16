@@ -26,6 +26,7 @@ class MarketDataClient:
             "interval": self._settings.market_data_candle_interval,
             "start": start.isoformat(),
             "end": end.isoformat(),
+            "limit": str(min(max(lookback, 1), 5000)),
         }
         payload = await self._get_with_retry("/candles", params=params)
         normalized = self._normalize_candle_payload(symbol=symbol, payload=payload)
@@ -48,14 +49,18 @@ class MarketDataClient:
         )
 
     def _normalize_candle_payload(self, symbol: str, payload: Any) -> CandleResponse:
-        # Upstream may return either:
-        # 1) {"symbol": "AAPL", "interval": "1m", "candles": [{...}]}
-        # 2) [{...}, {...}] (raw candle list)
         try:
             if isinstance(payload, dict) and "candles" in payload:
-                parsed = CandleResponse.model_validate(payload)
+                transformed = {
+                    **payload,
+                    "candles": [self._canonicalize_candle_item(item) for item in payload["candles"]],
+                }
+                parsed = CandleResponse.model_validate(transformed)
             elif isinstance(payload, list):
-                candles = [Candle.model_validate(item) for item in payload]
+                candles = [
+                    Candle.model_validate(self._canonicalize_candle_item(item))
+                    for item in payload
+                ]
                 parsed = CandleResponse(
                     symbol=symbol,
                     interval=self._settings.market_data_candle_interval,
@@ -64,16 +69,50 @@ class MarketDataClient:
             else:
                 raise DataValidationError(
                     error="unexpected_upstream_payload",
-                    details={"type": type(payload).__name__},
+                    details={"payload_type": type(payload).__name__},
                     status_code=422,
                 )
             return parsed
-        except ValidationError as exc:
+        except (ValidationError, TypeError) as exc:
+            sample_keys: list[str] = []
+            if isinstance(payload, dict):
+                candles = payload.get("candles")
+                if isinstance(candles, list) and candles and isinstance(candles[0], dict):
+                    sample_keys = sorted(candles[0].keys())
+            elif isinstance(payload, list) and payload and isinstance(payload[0], dict):
+                sample_keys = sorted(payload[0].keys())
+
             raise DataValidationError(
                 error="upstream_schema_mismatch",
-                details=str(exc),
+                details={
+                    "message": "Upstream candles did not match expected schema",
+                    "sample_candle_keys": sample_keys,
+                    "validation_errors": str(exc),
+                },
                 status_code=422,
             ) from exc
+
+    def _canonicalize_candle_item(self, item: Any) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise TypeError("Candle item must be a dictionary")
+
+        canonical = dict(item)
+
+        canonical.setdefault("timestamp", item.get("interval_start") or item.get("time") or item.get("datetime"))
+        canonical.setdefault("open", item.get("open_price") or item.get("price") or item.get("close_price"))
+        canonical.setdefault("high", item.get("high_price") or item.get("price") or item.get("close_price"))
+        canonical.setdefault("low", item.get("low_price") or item.get("price") or item.get("close_price"))
+        canonical.setdefault("close", item.get("close_price") or item.get("price"))
+        canonical.setdefault("volume", item.get("volume") or item.get("volume_sum") or 0.0)
+
+        # Last-resort stabilization: if only close/price exists, promote it to OHLC.
+        if canonical.get("close") is not None:
+            close = canonical["close"]
+            canonical.setdefault("open", close)
+            canonical.setdefault("high", close)
+            canonical.setdefault("low", close)
+
+        return canonical
 
     async def _get_with_retry(self, path: str, params: Mapping[str, str]) -> dict | list[dict]:
         attempts = self._settings.market_data_retry_attempts
