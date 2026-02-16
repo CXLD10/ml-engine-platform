@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes.features import router as features_router
 from app.api.routes.health import router as health_router
+from app.api.routes.models import router as models_router
+from app.api.routes.predict import router as predict_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.exceptions import ServiceError
@@ -19,6 +21,12 @@ app.include_router(health_router)
 # Expose feature routes with and without prefix for downstream compatibility.
 app.include_router(features_router)
 app.include_router(features_router, prefix=settings.api_prefix)
+
+# Phase 2 APIs
+app.include_router(predict_router)
+app.include_router(models_router)
+app.include_router(predict_router, prefix=settings.api_prefix)
+app.include_router(models_router, prefix=settings.api_prefix)
 
 
 @app.exception_handler(ServiceError)

@@ -1,0 +1,11 @@
+symbols:
+  - AAPL
+  - MSFT
+  - GOOGL
+lookback: 240
+test_size: 0.2
+random_state: 42
+cv_folds: 3
+model_params:
+  fit_intercept: true
+  l2_alpha: 0.0001

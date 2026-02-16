@@ -9,7 +9,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY configs ./configs
+COPY train.py ./train.py
 COPY .env.example ./.env.example
+
+RUN mkdir -p /app/artifacts/models
+VOLUME ["/app/artifacts/models"]
 
 EXPOSE 8000
 
