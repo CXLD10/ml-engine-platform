@@ -2,108 +2,92 @@
 
 ## Purpose
 
-This service is the **data consumption and feature engineering layer** for a production-style machine learning platform. It retrieves normalized market data from an upstream Market Data Platform over HTTP APIs, validates it, computes deterministic features, and exposes those features via a FastAPI API.
+This service is the **data consumption and feature engineering layer** for a production-style machine learning platform. It consumes normalized market data from the Market Data Platform over HTTP APIs, validates upstream contracts, computes deterministic features, and exposes those features via REST.
 
-Phase 1 intentionally excludes model training and inference. The goal is to establish a robust foundation for future ML lifecycle components.
+Phase 1 intentionally excludes training, inference, registry, and dashboards.
+
+## Upstream Dependency
+
+This service integrates with the Market Data Platform (read-only HTTP):
+
+- Base URL: `https://market-data-platform-3qp7bblccq-uc.a.run.app`
+- Swagger: `https://market-data-platform-3qp7bblccq-uc.a.run.app/docs`
+- Redoc: `https://market-data-platform-3qp7bblccq-uc.a.run.app/redoc`
+- Health: `https://market-data-platform-3qp7bblccq-uc.a.run.app/health`
+
+Expected upstream capabilities include:
+
+- `GET /symbols`
+- `GET /price/latest?symbol=...`
+- `GET /trades?symbol=...&start=...&end=...&limit=...`
+- `GET /candles?symbol=...&interval=1m&start=...&end=...`
+- typed error payloads (`error`, `details`, `status`)
 
 ## Architecture
 
-The codebase is structured for extension and maintainability:
+- `app/api`: route handlers + DI wiring only
+- `app/clients`: upstream HTTP clients
+- `app/services`: orchestration/business workflows
+- `app/features`: deterministic feature engineering
+- `app/schemas`: Pydantic data contracts
+- `app/core`: config and structured logging
 
-- `app/api`: API route definitions and dependency wiring.
-- `app/clients`: reusable HTTP client integrations (upstream market data).
-- `app/core`: configuration and logging.
-- `app/features`: feature engineering logic.
-- `app/schemas`: strict request/response and upstream validation schemas.
-- `app/services`: orchestration layer that coordinates client + feature logic.
+Business logic is intentionally outside route handlers for future extensibility.
 
-This design keeps business logic out of route handlers and allows future components (dataset builders, training, inference APIs) to be added with minimal refactoring.
-
-## Upstream Dependency Model
-
-The service depends on a running upstream Market Data Platform:
-
-- Base URL: `https://YOUR_MARKET_DATA_URL`
-- Docs: `https://YOUR_MARKET_DATA_URL/docs`
-- OpenAPI: `https://YOUR_MARKET_DATA_URL/openapi.json`
-
-Expected upstream endpoints include:
-
-- `GET /symbols`
-- `GET /candles?symbol=&start=&end=`
-- `GET /price/latest?symbol=`
-
-Resilience features implemented:
-
-- timeouts
-- retry with backoff
-- upstream schema validation
-- controlled error responses
-- structured JSON logging
-
-## Implemented API Endpoints
+## Implemented API
 
 - `GET /health`
-- `GET /api/v1/features?symbol=AAPL&lookback=100`
+- `GET /features?symbol=AAPL&lookback=100`
+- `GET /api/v1/features?symbol=AAPL&lookback=100` (aliased with prefix)
 
 `/features` response includes:
 
-- symbol
-- window used
-- upstream latest timestamp
-- feature rows (simple return, moving average, rolling volatility)
+- `symbol`
+- `window_used`
+- `upstream_latest_timestamp`
+- `features[]` rows with:
+  - `simple_return`
+  - `moving_average`
+  - `rolling_volatility`
 
-## Deterministic Feature Set
+Error responses are typed:
 
-Feature computations are deterministic for the same ordered candle input:
+```json
+{
+  "error": "invalid_lookback",
+  "details": {"max_lookback": 1000, "provided": 5000},
+  "status": 422
+}
+```
 
-- simple returns (`pct_change`)
-- moving average (rolling mean)
-- rolling volatility (rolling std over returns)
+## Resilience + Observability
+
+- timeout and retry/backoff around upstream calls
+- upstream schema normalization and validation
+- controlled service errors for upstream failures and invalid data
+- JSON structured logs to stdout/stderr
 
 ## Local Run
 
-1. Create environment file:
-
 ```bash
 cp .env.example .env
-```
-
-2. Update `.env` with your real `MARKET_DATA_BASE_URL`.
-
-3. Install dependencies and run:
-
-```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-4. Open docs:
+Then open:
 
 - `http://localhost:8000/docs`
 
-## Docker Run
-
-Build image:
+## Docker
 
 ```bash
 docker build -t ml-feature-platform:phase1 .
-```
-
-Run container:
-
-```bash
 docker run --rm -p 8000:8000 --env-file .env ml-feature-platform:phase1
 ```
 
-## Future Phases
+## Future Extension
 
-This repository is structured to support subsequent additions:
-
-- dataset builders
-- training pipelines
-- model registry integration
-- inference services
-- monitoring and dashboards
+The structure is designed for adding dataset builders, training pipelines, model lifecycle APIs, inference, and monitoring in future phases without major refactors.

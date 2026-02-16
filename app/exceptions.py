@@ -1,11 +1,17 @@
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
-class UpstreamServiceError(Exception):
-    message: str
+class ServiceError(Exception):
+    error: str
+    details: Any
+    status_code: int
 
 
-@dataclass
-class DataValidationError(Exception):
-    message: str
+class UpstreamServiceError(ServiceError):
+    pass
+
+
+class DataValidationError(ServiceError):
+    pass

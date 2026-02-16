@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, Query
 
+from app.api.dependencies import get_feature_service
 from app.schemas.error import ErrorResponse
 from app.schemas.features import FeaturesResponse
 from app.services.feature_service import FeatureService
-from app.api.dependencies import get_feature_service
 
 router = APIRouter(tags=["features"])
 
@@ -11,7 +11,7 @@ router = APIRouter(tags=["features"])
 @router.get(
     "/features",
     response_model=FeaturesResponse,
-    responses={502: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    responses={422: {"model": ErrorResponse}, 502: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 async def get_features(
     symbol: str = Query(min_length=1),

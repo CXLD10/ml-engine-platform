@@ -1,5 +1,6 @@
 from app.clients.market_data import MarketDataClient
 from app.core.config import Settings
+from app.exceptions import DataValidationError
 from app.features.engineering import compute_features
 from app.schemas.features import FeaturesResponse
 
@@ -12,7 +13,15 @@ class FeatureService:
     async def build_features(self, symbol: str, lookback: int | None) -> FeaturesResponse:
         window = lookback or self._settings.default_lookback
         if window > self._settings.max_lookback:
-            window = self._settings.max_lookback
+            raise DataValidationError(
+                error="invalid_lookback",
+                details={
+                    "message": "Lookback exceeds configured maximum",
+                    "max_lookback": self._settings.max_lookback,
+                    "provided": window,
+                },
+                status_code=422,
+            )
 
         candles_response = await self._market_data_client.get_candles(symbol=symbol, lookback=window)
         features = compute_features(

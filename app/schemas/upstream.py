@@ -14,4 +14,5 @@ class Candle(BaseModel):
 
 class CandleResponse(BaseModel):
     symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m")
     candles: list[Candle]
