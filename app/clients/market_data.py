@@ -26,7 +26,6 @@ class MarketDataClient:
             "interval": self._settings.market_data_candle_interval,
             "start": start.isoformat(),
             "end": end.isoformat(),
-            "limit": str(min(max(lookback, 1), 5000)),
         }
         payload = await self._get_with_retry("/candles", params=params)
         normalized = self._normalize_candle_payload(symbol=symbol, payload=payload)
@@ -49,6 +48,9 @@ class MarketDataClient:
         )
 
     def _normalize_candle_payload(self, symbol: str, payload: Any) -> CandleResponse:
+        # Upstream may return either:
+        # 1) {"symbol": "AAPL", "interval": "1m", "candles": [{...}]}
+        # 2) [{...}, {...}] (raw candle list)
         try:
             if isinstance(payload, dict) and "candles" in payload:
                 parsed = CandleResponse.model_validate(payload)
@@ -62,26 +64,14 @@ class MarketDataClient:
             else:
                 raise DataValidationError(
                     error="unexpected_upstream_payload",
-                    details={"payload_type": type(payload).__name__},
+                    details={"type": type(payload).__name__},
                     status_code=422,
                 )
             return parsed
         except ValidationError as exc:
-            sample_keys: list[str] = []
-            if isinstance(payload, dict):
-                candles = payload.get("candles")
-                if isinstance(candles, list) and candles and isinstance(candles[0], dict):
-                    sample_keys = sorted(candles[0].keys())
-            elif isinstance(payload, list) and payload and isinstance(payload[0], dict):
-                sample_keys = sorted(payload[0].keys())
-
             raise DataValidationError(
                 error="upstream_schema_mismatch",
-                details={
-                    "message": "Upstream candles did not match expected schema",
-                    "sample_candle_keys": sample_keys,
-                    "validation_errors": exc.errors()[:5],
-                },
+                details=str(exc),
                 status_code=422,
             ) from exc
 
