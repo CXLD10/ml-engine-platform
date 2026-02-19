@@ -38,6 +38,10 @@ class PredictionAuditLogger:
             fh.write(json.dumps(record, default=str) + "\n")
         return record
 
+
+    def clear(self) -> None:
+        if self._log_file.exists():
+            self._log_file.write_text("", encoding="utf-8")
     def get_recent(self, limit: int | None = None) -> list[dict[str, Any]]:
         resolved_limit = min(limit or self._limit, self._limit)
         if not self._log_file.exists():

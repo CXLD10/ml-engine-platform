@@ -3,11 +3,14 @@ from functools import lru_cache
 from app.clients.market_data import MarketDataClient
 from app.core.config import Settings, get_settings
 from app.logging.audit import PredictionAuditLogger
+from app.ml.dataset_builder import DatasetBuilder
 from app.ml.inference import InferenceEngine
 from app.ml.registry import ModelRegistry
+from app.ml.trainer import Trainer
 from app.monitoring.drift import DriftDetector
 from app.monitoring.freshness import FreshnessTracker
 from app.monitoring.metrics import LatencyTracker
+from app.services.control_plane import AsyncTrainingManager
 from app.services.feature_service import FeatureService
 
 
@@ -66,3 +69,27 @@ def get_inference_engine() -> InferenceEngine:
         freshness_tracker=get_freshness_tracker(),
         drift_detector=get_drift_detector(),
     )
+
+
+@lru_cache
+def get_trainer() -> Trainer:
+    return Trainer(dataset_builder=DatasetBuilder(feature_service=get_feature_service()), registry=get_model_registry())
+
+
+@lru_cache
+def get_training_manager() -> AsyncTrainingManager:
+    return AsyncTrainingManager(trainer=get_trainer(), settings=get_settings())
+
+
+def reset_runtime_state() -> None:
+    get_training_manager.cache_clear()
+    get_trainer.cache_clear()
+    get_inference_engine.cache_clear()
+    get_drift_detector.cache_clear()
+    get_freshness_tracker.cache_clear()
+    get_latency_tracker.cache_clear()
+    get_audit_logger.cache_clear()
+    get_model_registry.cache_clear()
+    get_feature_service.cache_clear()
+    _get_market_data_client.cache_clear()
+    get_settings.cache_clear()
