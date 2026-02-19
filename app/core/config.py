@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -8,6 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", protected_namespaces=("settings_",))
 
     app_name: str = Field(default="ml-engine-platform", alias="APP_NAME")
+    env: Literal["development", "staging", "production"] = Field(default="development", alias="ENV")
     app_env: str = Field(default="local", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     api_prefix: str = Field(default="/api/v1", alias="API_PREFIX")
@@ -28,6 +30,28 @@ class Settings(BaseSettings):
     drift_threshold: float = Field(default=0.25, alias="DRIFT_THRESHOLD")
     audit_log_limit: int = Field(default=100, alias="AUDIT_LOG_LIMIT")
     audit_log_file: str = Field(default="artifacts/predictions/audit.log", alias="AUDIT_LOG_FILE")
+    admin_api_key: str = Field(default="changeme-admin-key", alias="ADMIN_API_KEY")
+    train_symbols: str = Field(default="AAPL,MSFT", alias="TRAIN_SYMBOLS")
+    train_lookback: int = Field(default=120, alias="TRAIN_LOOKBACK")
+    train_test_size: float = Field(default=0.2, alias="TRAIN_TEST_SIZE")
+    train_random_state: int = Field(default=42, alias="TRAIN_RANDOM_STATE")
+    train_cv_folds: int = Field(default=3, alias="TRAIN_CV_FOLDS")
+    rate_limit_requests: int = Field(default=120, alias="RATE_LIMIT_REQUESTS")
+    rate_limit_window_seconds: int = Field(default=60, alias="RATE_LIMIT_WINDOW_SECONDS")
+
+    @property
+    def resolved_log_level(self) -> str:
+        if self.log_level and self.log_level.upper() != "INFO":
+            return self.log_level.upper()
+        if self.env == "development":
+            return "DEBUG"
+        if self.env == "staging":
+            return "INFO"
+        return "WARNING"
+
+    @property
+    def resolved_train_symbols(self) -> list[str]:
+        return [symbol.strip().upper() for symbol in self.train_symbols.split(",") if symbol.strip()]
 
 
 @lru_cache

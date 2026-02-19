@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PredictResponse(BaseModel):
@@ -69,3 +69,19 @@ class FreshnessResponse(BaseModel):
 class LatencyResponse(BaseModel):
     avg_latency_ms: float
     recent_calls: int
+
+
+class BatchPredictRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1)
+
+
+class BatchPredictionItem(BaseModel):
+    symbol: str
+    prediction: float | None = None
+    confidence: float | None = None
+    version: str | None = None
+    error: str | None = None
+
+
+class BatchPredictResponse(BaseModel):
+    items: list[BatchPredictionItem]

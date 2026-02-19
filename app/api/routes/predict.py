@@ -4,7 +4,13 @@ from app.api.dependencies import get_audit_logger, get_inference_engine
 from app.logging.audit import PredictionAuditLogger
 from app.ml.inference import InferenceEngine
 from app.schemas.error import ErrorResponse
-from app.schemas.ml import PredictResponse, PredictionAuditResponse
+from app.schemas.ml import (
+    BatchPredictRequest,
+    BatchPredictResponse,
+    BatchPredictionItem,
+    PredictResponse,
+    PredictionAuditResponse,
+)
 
 router = APIRouter(tags=["inference"])
 
@@ -24,6 +30,29 @@ async def predict(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return PredictResponse.model_validate(payload)
+
+
+@router.post("/predict/batch", response_model=BatchPredictResponse)
+async def predict_batch(
+    request: BatchPredictRequest,
+    version: str | None = Query(default=None),
+    engine: InferenceEngine = Depends(get_inference_engine),
+) -> BatchPredictResponse:
+    results: list[BatchPredictionItem] = []
+    for symbol in request.symbols:
+        try:
+            payload = await engine.predict(symbol=symbol.upper(), version=version)
+            results.append(
+                BatchPredictionItem(
+                    symbol=symbol.upper(),
+                    prediction=payload["prediction"],
+                    confidence=payload["confidence"],
+                    version=payload["model_version"],
+                )
+            )
+        except Exception as exc:
+            results.append(BatchPredictionItem(symbol=symbol.upper(), error=str(exc)))
+    return BatchPredictResponse(items=results)
 
 
 @router.get("/predictions/recent", response_model=PredictionAuditResponse)
