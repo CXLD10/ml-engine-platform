@@ -2,42 +2,57 @@
 
 ## Project Overview
 
-ML Engine Platform is a production-oriented machine learning backend that starts with deterministic market feature engineering (Phase 1) and extends to dataset construction, model training, registry-backed model lifecycle management, and real-time inference APIs (Phase 2).
-
-The service integrates with an upstream Market Data Platform and keeps API compatibility for existing feature endpoints while adding the model development and serving workflow.
+ML Engine Platform is a production-oriented machine learning backend that starts with deterministic market feature engineering (Phase 1), expands into model development and serving (Phase 2), and now adds production hardening controls (Phase 3) for lifecycle governance and runtime observability.
 
 ## Progression Summary
 
 ### Phase 1 — Feature Engine
 
-Phase 1 implemented a resilient client to consume market data from the Market Data Platform and exposed deterministic engineered features through REST (`/features`, `/api/v1/features`). It established retries, timeout controls, strict schema normalization, and typed error handling.
+Phase 1 implemented a resilient client to consume market data from the Market Data Platform and exposed deterministic engineered features through REST (`/features`, `/api/v1/features`).
 
 ### Phase 2 — Training & Inference
 
-Phase 2 extends the platform to:
+Phase 2 added:
 
-- Build labeled datasets from Phase 1 feature outputs.
-- Train and validate versioned ML models using configurable training settings.
-- Persist model artifacts, metadata, metrics, and feature schema in a filesystem registry.
-- Serve real-time predictions through REST (`/predict`) with model/version discovery APIs (`/models`, `/model/{version}`).
-- Keep operational readiness via Dockerization, logging, and unit testing.
+- Dataset builder for supervised labels.
+- Model training and validation.
+- Versioned artifacts in a filesystem model registry.
+- Real-time inference (`/predict`).
+- Model discovery endpoints (`/models`, `/model/{version}`).
+
+### Phase 3 – Lifecycle & Monitoring
+
+Phase 3 turns the service into a small internal ML platform with production controls:
+
+- **Model lifecycle controls**: multiple versions, active model designation, promotion/activation (`POST /models/activate/{version}`), and rollback by re-activating a prior version.
+- **Structured registry metadata**: `registry.json` now tracks created-at timestamps, training/validation metrics, dataset window, and active version.
+- **Prediction audit trail**: each inference has a unique `request_id` and is persisted as structured JSON with version, features, output, timestamp, and latency.
+- **Drift detection**: rolling feature statistics are compared against training baselines with configurable thresholding (`DRIFT_THRESHOLD`).
+- **Observability endpoints**: drift, performance history, freshness, and latency monitoring APIs.
+- **Production hardening**: monitoring logic is modularized outside API routes and configurable through environment variables.
 
 ## High-Level Architecture (Text Diagram)
 
 1. **Upstream Client Layer (`app/clients`)**
    - `MarketDataClient` calls upstream `/candles` with retries/timeouts.
 2. **Feature Layer (`app/features`, `app/services`)**
-   - Deterministic feature computation (returns, moving average, rolling volatility).
+   - Deterministic feature computation.
 3. **Dataset Builder (`app/ml/dataset_builder.py`)**
-   - Converts feature windows into labeled training datasets (`target_next_return`).
+   - Converts feature windows into labeled datasets.
 4. **Trainer (`app/ml/trainer.py`)**
-   - Splits train/validation, trains model, computes RMSE/R² (+ optional CV), stores artifacts.
-5. **Model Registry (`app/ml/registry.py`)**
-   - Versioned model storage under `artifacts/models/vN/*` with active version tracking.
+   - Trains versioned models and stores validation + baseline feature stats.
+5. **Lifecycle Registry (`app/registry/lifecycle.py`)**
+   - Persists artifacts and structured registry metadata (`registry.json`, `training_history.json`).
 6. **Inference Engine (`app/ml/inference.py`)**
-   - Loads model from registry, fetches latest features, returns prediction payload.
-7. **REST API Layer (`app/api/routes`)**
-   - Existing Phase 1 endpoints + Phase 2 endpoints (`/predict`, `/models`, `/model/{version}`).
+   - Runs prediction and emits audit + monitoring signals.
+7. **Audit Logging (`app/logging/audit.py`)**
+   - Structured JSON prediction log with retrieval support.
+8. **Monitoring Modules (`app/monitoring`)**
+   - `drift.py`: feature drift checks.
+   - `freshness.py`: upstream/training/inference freshness tracking.
+   - `metrics.py`: rolling latency tracking.
+9. **REST API Layer (`app/api/routes`)**
+   - Phase 1 + 2 endpoints remain compatible, with added Phase 3 monitoring/lifecycle APIs.
 
 ## API Endpoints
 
@@ -47,30 +62,20 @@ Phase 2 extends the platform to:
 - `GET /features?symbol=XYZ&lookback=NN`
 - `GET /api/v1/features?symbol=XYZ&lookback=NN`
 
-### Phase 2
+### Phase 2 + 3
 
 - `GET /predict?symbol=XYZ`
+- `GET /predictions/recent?limit=N`
 - `GET /models`
-- `GET /model/{version}`
-- Prefixed aliases are also exposed under `/api/v1/*`.
+- `GET /models/{version}`
+- `GET /model/{version}` (legacy compatibility)
+- `POST /models/activate/{version}`
+- `GET /monitoring/drift`
+- `GET /monitoring/history`
+- `GET /monitoring/freshness`
+- `GET /monitoring/latency`
 
-`GET /predict` response example:
-
-```json
-{
-  "symbol": "XYZ",
-  "prediction": 0.73,
-  "confidence": 0.82,
-  "model_version": "v1",
-  "features": {
-    "close": 102.0,
-    "simple_return": 0.01,
-    "moving_average": 101.5,
-    "rolling_volatility": 0.02
-  },
-  "timestamp": "2024-01-01T00:00:00+00:00"
-}
-```
+All APIs are also exposed under `/api/v1/*`.
 
 ## Directory Layout
 
@@ -82,6 +87,7 @@ app/
       features.py
       health.py
       models.py
+      monitoring.py
       predict.py
   clients/
     market_data.py
@@ -90,11 +96,19 @@ app/
     logging.py
   features/
     engineering.py
+  logging/
+    audit.py
   ml/
     dataset_builder.py
     trainer.py
     registry.py
     inference.py
+  monitoring/
+    drift.py
+    freshness.py
+    metrics.py
+  registry/
+    lifecycle.py
   schemas/
     error.py
     features.py
@@ -110,80 +124,41 @@ tests/
 train.py
 ```
 
-## Build Dataset + Train Model
-
-1. Configure environment:
-
-```bash
-cp .env.example .env
-```
-
-2. Install dependencies:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-3. Train using config:
-
-```bash
-python train.py --config configs/train.yaml
-```
-
-Training outputs are saved to the model registry (default `artifacts/models`):
-
-- `model.pkl`
-- `metadata.json`
-- `metrics.json`
-- `feature_columns.json`
-- `dataset_summary.json`
-
-## Run Inference API
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Open docs:
-
-- `http://localhost:8000/docs`
-
-Call:
-
-```bash
-curl "http://localhost:8000/predict?symbol=AAPL"
-```
-
 ## Configuration
 
 Environment variables are documented in `.env.example`.
 
-Key values:
+Key Phase 3 values:
 
-- `MARKET_DATA_*` for upstream connectivity and resilience
-- `MODEL_REGISTRY_DIR` for artifact storage path
-- `INFERENCE_LOOKBACK` for default prediction lookback window
-
-Training configuration is externalized in `configs/train.yaml`:
-
-- symbol list
-- lookback
-- train/validation split
-- CV folds
-- model hyperparameters
+- `DRIFT_THRESHOLD` — threshold for drift deviation checks.
+- `AUDIT_LOG_LIMIT` — max entries returned by `/predictions/recent`.
+- `AUDIT_LOG_FILE` — structured JSON lines audit log destination.
 
 ## Docker
 
+Docker workflow remains unchanged and compatible:
+
 ```bash
-docker build -t ml-engine-platform:phase2 .
-docker run --rm -p 8000:8000 --env-file .env -v $(pwd)/artifacts/models:/app/artifacts/models ml-engine-platform:phase2
+docker build -t ml-engine-platform:phase3 .
+docker run --rm -p 8000:8000 --env-file .env -v $(pwd)/artifacts:/app/artifacts ml-engine-platform:phase3
 ```
 
-## Reasonable Engineering Decisions
+## Example Prediction Response (Phase 3)
 
-- Implemented a regression target (`target_next_return`) for next-step return prediction.
-- Used a lightweight regularized linear regressor baseline for deterministic tabular inference in constrained runtime environments.
-- Added confidence as a bounded heuristic (`1 - |prediction|`) for a stable API contract placeholder.
-- Kept Phase 1 routes unchanged to preserve client compatibility.
+```json
+{
+  "symbol": "XYZ",
+  "prediction": 0.73,
+  "confidence": 0.82,
+  "model_version": "v1",
+  "features": {
+    "close": 102.0,
+    "simple_return": 0.01,
+    "moving_average": 101.5,
+    "rolling_volatility": 0.02
+  },
+  "timestamp": "2024-01-01T00:00:00+00:00",
+  "request_id": "5a801341-6492-4cf5-a4d9-030052454008",
+  "latency_ms": 7.12
+}
+```

@@ -51,6 +51,11 @@ class Trainer:
         model.fit(x_train, y_train)
         predictions = model.predict(x_val)
 
+        training_predictions = model.predict(x_train)
+        training_metrics = {
+            "rmse": float(np.sqrt(np.mean((y_train - training_predictions) ** 2))),
+            "r2": float(1 - (np.sum((y_train - training_predictions) ** 2) / np.sum((y_train - y_train.mean()) ** 2))),
+        }
         metrics = {
             "rmse": float(np.sqrt(np.mean((y_val - predictions) ** 2))),
             "r2": float(1 - (np.sum((y_val - predictions) ** 2) / np.sum((y_val - y_val.mean()) ** 2))),
@@ -71,15 +76,23 @@ class Trainer:
             metrics["cv_rmse_mean"] = float(np.mean(fold_rmse))
 
         resolved_version = version or self._registry.next_version()
+        trained_at = datetime.now(timezone.utc).isoformat()
+        feature_stats = {
+            col: {"mean": float(dataset[col].mean()), "std": float(dataset[col].std(ddof=0))} for col in FEATURE_COLUMNS
+        }
         metadata = {
             "version": resolved_version,
-            "trained_at": datetime.now(timezone.utc).isoformat(),
+            "trained_at": trained_at,
             "algorithm": "LinearRegressor",
             "lookback": config.lookback,
             "symbols": config.symbols,
             "test_size": config.test_size,
             "cv_folds": config.cv_folds,
             "model_params": config.model_params,
+            "training_metrics": training_metrics,
+            "validation_metrics": metrics,
+            "dataset_window": build_result.summary,
+            "training_feature_stats": feature_stats,
         }
         self._registry.save_model_package(
             version=resolved_version,

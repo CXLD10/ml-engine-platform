@@ -20,6 +20,8 @@ class StubInferenceEngine:
                 "rolling_volatility": 0.02,
             },
             "timestamp": datetime(2024, 1, 1, tzinfo=timezone.utc).isoformat(),
+            "request_id": "req-123",
+            "latency_ms": 4.2,
         }
 
 
@@ -39,3 +41,5 @@ def test_predict_response_schema() -> None:
     assert "model_version" in body
     assert "features" in body
     assert "timestamp" in body
+    assert "request_id" in body
+    assert "latency_ms" in body

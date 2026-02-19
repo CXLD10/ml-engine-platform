@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     model_registry_dir: str = Field(default="artifacts/models", alias="MODEL_REGISTRY_DIR")
     inference_lookback: int = Field(default=120, alias="INFERENCE_LOOKBACK")
+    drift_threshold: float = Field(default=0.25, alias="DRIFT_THRESHOLD")
+    audit_log_limit: int = Field(default=100, alias="AUDIT_LOG_LIMIT")
+    audit_log_file: str = Field(default="artifacts/predictions/audit.log", alias="AUDIT_LOG_FILE")
 
 
 @lru_cache
