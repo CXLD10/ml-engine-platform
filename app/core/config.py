@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     app_env: str = Field(default="local", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     api_prefix: str = Field(default="/api/v1", alias="API_PREFIX")
+    cors_allow_origins: str = Field(default="*", alias="CORS_ALLOW_ORIGINS")
+    cors_allow_methods: str = Field(default="*", alias="CORS_ALLOW_METHODS")
+    cors_allow_headers: str = Field(default="*", alias="CORS_ALLOW_HEADERS")
 
     market_data_base_url: HttpUrl = Field(alias="MARKET_DATA_BASE_URL")
     market_data_timeout_seconds: float = Field(default=5.0, alias="MARKET_DATA_TIMEOUT_SECONDS")
@@ -52,6 +55,24 @@ class Settings(BaseSettings):
     @property
     def resolved_train_symbols(self) -> list[str]:
         return [symbol.strip().upper() for symbol in self.train_symbols.split(",") if symbol.strip()]
+
+    @property
+    def resolved_cors_allow_origins(self) -> list[str]:
+        if self.cors_allow_origins.strip() == "*":
+            return ["*"]
+        return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
+
+    @property
+    def resolved_cors_allow_methods(self) -> list[str]:
+        if self.cors_allow_methods.strip() == "*":
+            return ["*"]
+        return [item.strip().upper() for item in self.cors_allow_methods.split(",") if item.strip()]
+
+    @property
+    def resolved_cors_allow_headers(self) -> list[str]:
+        if self.cors_allow_headers.strip() == "*":
+            return ["*"]
+        return [item.strip() for item in self.cors_allow_headers.split(",") if item.strip()]
 
 
 @lru_cache
