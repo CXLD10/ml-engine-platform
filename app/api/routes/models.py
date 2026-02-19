@@ -13,11 +13,12 @@ async def list_models(registry: ModelRegistry = Depends(get_model_registry)) -> 
     return ModelSummaryResponse(
         available_versions=registry.list_versions(),
         active_version=registry.get_active_version(),
+        models=registry.list_models(),
     )
 
 
 @router.get(
-    "/model/{version}",
+    "/models/{version}",
     response_model=ModelDetailsResponse,
     responses={404: {"model": ErrorResponse}},
 )
@@ -27,3 +28,21 @@ async def get_model(version: str, registry: ModelRegistry = Depends(get_model_re
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ModelDetailsResponse.model_validate(details)
+
+
+@router.get(
+    "/model/{version}",
+    response_model=ModelDetailsResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_model_legacy(version: str, registry: ModelRegistry = Depends(get_model_registry)) -> ModelDetailsResponse:
+    return await get_model(version=version, registry=registry)
+
+
+@router.post("/models/activate/{version}", responses={404: {"model": ErrorResponse}})
+async def activate_model(version: str, registry: ModelRegistry = Depends(get_model_registry)) -> dict[str, str]:
+    try:
+        registry.activate_version(version)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"status": "ok", "active_version": version}

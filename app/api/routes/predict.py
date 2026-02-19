@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.dependencies import get_inference_engine
+from app.api.dependencies import get_audit_logger, get_inference_engine
+from app.logging.audit import PredictionAuditLogger
 from app.ml.inference import InferenceEngine
 from app.schemas.error import ErrorResponse
-from app.schemas.ml import PredictResponse
+from app.schemas.ml import PredictResponse, PredictionAuditResponse
 
 router = APIRouter(tags=["inference"])
 
@@ -23,3 +24,11 @@ async def predict(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return PredictResponse.model_validate(payload)
+
+
+@router.get("/predictions/recent", response_model=PredictionAuditResponse)
+async def recent_predictions(
+    limit: int = Query(default=20, ge=1),
+    audit_logger: PredictionAuditLogger = Depends(get_audit_logger),
+) -> PredictionAuditResponse:
+    return PredictionAuditResponse(entries=audit_logger.get_recent(limit=limit))
