@@ -61,7 +61,12 @@ Operator dashboard with four primary areas:
 
 ## API Surface (high-value endpoints)
 
-### Public
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
 
 - `GET /health`
 - `GET /ready`
@@ -77,11 +82,7 @@ Operator dashboard with four primary areas:
 
 ### Admin (requires `X-API-Key`)
 
-- `POST /admin/train`
-- `GET /admin/train/status`
-- `POST /admin/activate/{version}`
-- `POST /admin/reload`
-- `DELETE /admin/audit/clear`
+> Replace placeholders (`PROJECT_ID`, `REGION`, `REPO`, `SERVICE_NAME`) with your values.
 
 All APIs are also exposed under `/api/v1/*`.
 
