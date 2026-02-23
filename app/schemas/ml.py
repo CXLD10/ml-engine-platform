@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -7,14 +7,23 @@ from pydantic import BaseModel, ConfigDict, Field
 class PredictResponse(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
+    exchange: str
     symbol: str
-    prediction: float
+    prediction: Literal["BUY", "HOLD", "SELL"]
     confidence: float
+    probability_up: float
+    probability_down: float
+    risk_score: float
+    expected_return: float
+    forecast_horizon: str = "5d"
     model_version: str
-    features: dict[str, float]
+    degraded_input: bool = False
+    input_data_status: str | None = None
+    inference_latency_ms: float
     timestamp: datetime
     request_id: str
-    latency_ms: float
+    features: dict[str, float] | None = None
+    latency_ms: float | None = None
 
 
 class ModelRecord(BaseModel):
@@ -77,7 +86,7 @@ class BatchPredictRequest(BaseModel):
 
 class BatchPredictionItem(BaseModel):
     symbol: str
-    prediction: float | None = None
+    prediction: Literal["BUY", "HOLD", "SELL"] | None = None
     confidence: float | None = None
     version: str | None = None
     error: str | None = None

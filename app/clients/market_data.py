@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import Mapping
@@ -9,112 +11,131 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.exceptions import DataValidationError, UpstreamServiceError
-from app.schemas.upstream import Candle, CandleResponse
+from app.schemas.p1 import (
+    CandleResponse,
+    CompanyResponse,
+    FundamentalsResponse,
+    MarketStatusResponse,
+    P1ErrorResponse,
+    QuoteResponse,
+)
 
 logger = logging.getLogger(__name__)
+
+ERROR_CODE_MAP = {
+    "EXCHANGE_UNAVAILABLE": 503,
+    "RATE_LIMITED": 429,
+    "INVALID_INPUT": 422,
+    "SCHEMA_MISMATCH": 502,
+    "STALE_DATA": 502,
+    "PARTIAL_DATA": 502,
+}
+RETRYABLE_CODES = {"EXCHANGE_UNAVAILABLE", "RATE_LIMITED", "STALE_DATA", "PARTIAL_DATA"}
 
 
 class MarketDataClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def get_candles(self, symbol: str, lookback: int) -> CandleResponse:
-        end = datetime.now(tz=timezone.utc)
-        start = end - timedelta(days=max(lookback * 2, 30))
-        params = {
-            "symbol": symbol,
-            "interval": self._settings.market_data_candle_interval,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "limit": str(min(max(lookback, 1), 5000)),
-        }
-        payload = await self._get_with_retry("/candles", params=params)
-        normalized = self._normalize_candle_payload(symbol=symbol, payload=payload)
+    async def get_quote(self, symbol: str, exchange: str) -> QuoteResponse:
+        payload = await self._get_with_retry("/quote", {"symbol": symbol, "exchange": exchange})
+        payload = self._normalize_endpoint_payload("/quote", payload)
+        return self._validate_payload(QuoteResponse, payload)
 
-        if len(normalized.candles) < lookback:
+    async def get_intraday(self, symbol: str, exchange: str, interval: str = "1m", limit: int = 300) -> CandleResponse:
+        payload = await self._get_with_retry(
+            "/intraday", {"symbol": symbol, "exchange": exchange, "interval": interval, "limit": str(limit)}
+        )
+        payload = self._normalize_endpoint_payload("/intraday", payload)
+        return self._validate_payload(CandleResponse, payload)
+
+    async def get_historical(self, symbol: str, exchange: str, start: datetime, end: datetime, interval: str = "1d") -> CandleResponse:
+        payload = await self._get_with_retry(
+            "/historical",
+            {
+                "symbol": symbol,
+                "exchange": exchange,
+                "interval": interval,
+                "start": start.astimezone(timezone.utc).isoformat(),
+                "end": end.astimezone(timezone.utc).isoformat(),
+            },
+        )
+        payload = self._normalize_endpoint_payload("/historical", payload)
+        return self._validate_payload(CandleResponse, payload)
+
+    async def get_fundamentals(self, symbol: str, exchange: str) -> FundamentalsResponse:
+        payload = await self._get_with_retry("/fundamentals", {"symbol": symbol, "exchange": exchange})
+        payload = self._normalize_endpoint_payload("/fundamentals", payload)
+        return self._validate_payload(FundamentalsResponse, payload)
+
+    async def get_company(self, symbol: str, exchange: str) -> CompanyResponse:
+        payload = await self._get_with_retry("/company", {"symbol": symbol, "exchange": exchange})
+        payload = self._normalize_endpoint_payload("/company", payload)
+        return self._validate_payload(CompanyResponse, payload)
+
+    async def get_market_status(self, exchange: str) -> MarketStatusResponse:
+        payload = await self._get_with_retry("/market-status", {"exchange": exchange})
+        payload = self._normalize_endpoint_payload("/market-status", payload)
+        return self._validate_payload(MarketStatusResponse, payload)
+
+    async def get_candles(self, symbol: str, lookback: int, exchange: str = "NASDAQ") -> CandleResponse:
+        end = datetime.now(tz=timezone.utc)
+        start = end - timedelta(days=max(lookback * 3, 30))
+        response = await self.get_historical(symbol=symbol, exchange=exchange, start=start, end=end, interval="1d")
+        if len(response.candles) < lookback:
             raise DataValidationError(
                 error="insufficient_upstream_data",
-                details={
-                    "symbol": symbol,
-                    "requested_lookback": lookback,
-                    "received_candles": len(normalized.candles),
-                },
+                details={"symbol": symbol, "requested_lookback": lookback, "received_candles": len(response.candles)},
                 status_code=422,
             )
+        response.candles = response.candles[-lookback:]
+        return response
 
-        return CandleResponse(
-            symbol=normalized.symbol,
-            interval=normalized.interval,
-            candles=normalized.candles[-lookback:],
-        )
 
-    def _normalize_candle_payload(self, symbol: str, payload: Any) -> CandleResponse:
-        try:
-            if isinstance(payload, dict) and "candles" in payload:
-                transformed = {
-                    **payload,
-                    "candles": [self._canonicalize_candle_item(item) for item in payload["candles"]],
-                }
-                parsed = CandleResponse.model_validate(transformed)
-            elif isinstance(payload, list):
-                candles = [
-                    Candle.model_validate(self._canonicalize_candle_item(item))
-                    for item in payload
+    def _normalize_endpoint_payload(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return payload
+
+        normalized = dict(payload)
+        if path == "/quote" and isinstance(payload.get("quote"), dict):
+            normalized.update(payload["quote"])
+        if path in {"/intraday", "/historical"} and isinstance(payload.get("data"), dict):
+            normalized.update(payload["data"])
+        if path == "/fundamentals" and all(key in payload for key in ["market_cap", "pe_ratio"]):
+            fundamentals_fields = {
+                key: payload.get(key)
+                for key in [
+                    "market_cap", "pe_ratio", "forward_pe", "eps", "revenue", "revenue_growth", "ebitda",
+                    "net_income", "debt_to_equity", "roe", "sector", "industry", "country", "currency",
                 ]
-                parsed = CandleResponse(
-                    symbol=symbol,
-                    interval=self._settings.market_data_candle_interval,
-                    candles=candles,
-                )
-            else:
-                raise DataValidationError(
-                    error="unexpected_upstream_payload",
-                    details={"payload_type": type(payload).__name__},
-                    status_code=422,
-                )
-            return parsed
-        except (ValidationError, TypeError) as exc:
-            sample_keys: list[str] = []
-            if isinstance(payload, dict):
-                candles = payload.get("candles")
-                if isinstance(candles, list) and candles and isinstance(candles[0], dict):
-                    sample_keys = sorted(candles[0].keys())
-            elif isinstance(payload, list) and payload and isinstance(payload[0], dict):
-                sample_keys = sorted(payload[0].keys())
+            }
+            normalized["fundamentals"] = fundamentals_fields
+        if path == "/company" and isinstance(payload.get("company"), dict):
+            normalized.update(payload["company"])
+        if path == "/market-status" and isinstance(payload.get("market_status"), dict):
+            market = payload["market_status"]
+            normalized.update(
+                {
+                    "is_open": market.get("is_open", market.get("market_open")),
+                    "session": market.get("session", "unknown"),
+                    "timezone": market.get("timezone", "UTC"),
+                    "server_time_utc": market.get("server_time_utc", market.get("timestamp")),
+                    "local_exchange_time": market.get("local_exchange_time", market.get("timestamp")),
+                }
+            )
+        return normalized
 
+    def _validate_payload(self, model_cls, payload: dict[str, Any]) -> Any:
+        try:
+            return model_cls.model_validate(payload)
+        except ValidationError as exc:
             raise DataValidationError(
                 error="upstream_schema_mismatch",
-                details={
-                    "message": "Upstream candles did not match expected schema",
-                    "sample_candle_keys": sample_keys,
-                    "validation_errors": str(exc),
-                },
+                details={"message": "Payload does not match schema_version 1.1 contract", "validation_errors": str(exc)},
                 status_code=422,
             ) from exc
 
-    def _canonicalize_candle_item(self, item: Any) -> dict[str, Any]:
-        if not isinstance(item, dict):
-            raise TypeError("Candle item must be a dictionary")
-
-        canonical = dict(item)
-
-        canonical.setdefault("timestamp", item.get("interval_start") or item.get("time") or item.get("datetime"))
-        canonical.setdefault("open", item.get("open_price") or item.get("price") or item.get("close_price"))
-        canonical.setdefault("high", item.get("high_price") or item.get("price") or item.get("close_price"))
-        canonical.setdefault("low", item.get("low_price") or item.get("price") or item.get("close_price"))
-        canonical.setdefault("close", item.get("close_price") or item.get("price"))
-        canonical.setdefault("volume", item.get("volume") or item.get("volume_sum") or 0.0)
-
-        # Last-resort stabilization: if only close/price exists, promote it to OHLC.
-        if canonical.get("close") is not None:
-            close = canonical["close"]
-            canonical.setdefault("open", close)
-            canonical.setdefault("high", close)
-            canonical.setdefault("low", close)
-
-        return canonical
-
-    async def _get_with_retry(self, path: str, params: Mapping[str, str]) -> dict | list[dict]:
+    async def _get_with_retry(self, path: str, params: Mapping[str, str]) -> dict[str, Any]:
         attempts = self._settings.market_data_retry_attempts
         timeout = self._settings.market_data_timeout_seconds
         backoff = self._settings.market_data_retry_backoff_seconds
@@ -126,28 +147,35 @@ class MarketDataClient:
             for attempt in range(1, attempts + 1):
                 try:
                     response = await client.get(url, params=params)
-                    response.raise_for_status()
-                    return response.json()
+                    payload = response.json()
+                    if response.status_code >= 400:
+                        self._raise_upstream_error(payload)
+                    return payload
+                except UpstreamServiceError as exc:
+                    last_exc = exc
+                    retryable = exc.error in RETRYABLE_CODES
+                    if attempt < attempts and retryable:
+                        await asyncio.sleep(backoff * attempt)
+                        continue
+                    raise
                 except (httpx.HTTPError, ValueError) as exc:
                     last_exc = exc
-                    logger.warning(
-                        "upstream_request_failed",
-                        extra={
-                            "attempt": attempt,
-                            "attempts": attempts,
-                            "url": url,
-                            "params": dict(params),
-                            "error": str(exc),
-                        },
-                    )
+                    logger.warning("upstream_request_failed", extra={"attempt": attempt, "url": url, "params": dict(params), "error": str(exc)})
                     if attempt < attempts:
                         await asyncio.sleep(backoff * attempt)
 
         raise UpstreamServiceError(
-            error="upstream_unavailable",
-            details={
-                "message": f"Failed to fetch upstream data after {attempts} attempts",
-                "url": url,
-            },
-            status_code=502,
+            error="EXCHANGE_UNAVAILABLE",
+            details={"message": f"Failed upstream call after {attempts} attempts", "url": url},
+            status_code=503,
         ) from last_exc
+
+    def _raise_upstream_error(self, payload: Any) -> None:
+        if isinstance(payload, dict):
+            try:
+                parsed = P1ErrorResponse.model_validate(payload)
+                code = ERROR_CODE_MAP.get(parsed.error_code, 502)
+                raise UpstreamServiceError(error=parsed.error_code, details=parsed.message, status_code=code)
+            except ValidationError:
+                pass
+        raise UpstreamServiceError(error="SCHEMA_MISMATCH", details="Malformed upstream error payload", status_code=502)

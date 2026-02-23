@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     audit_log_file: str = Field(default="artifacts/predictions/audit.log", alias="AUDIT_LOG_FILE")
     admin_api_key: str = Field(default="changeme-admin-key", alias="ADMIN_API_KEY")
     train_symbols: str = Field(default="AAPL,MSFT", alias="TRAIN_SYMBOLS")
-    train_lookback: int = Field(default=120, alias="TRAIN_LOOKBACK")
+    train_lookback: int = Field(default=252, alias="TRAIN_LOOKBACK")
     train_test_size: float = Field(default=0.2, alias="TRAIN_TEST_SIZE")
     train_random_state: int = Field(default=42, alias="TRAIN_RANDOM_STATE")
     train_cv_folds: int = Field(default=3, alias="TRAIN_CV_FOLDS")

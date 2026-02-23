@@ -10,29 +10,29 @@ class FeatureService:
         self._market_data_client = market_data_client
         self._settings = settings
 
-    async def build_features(self, symbol: str, lookback: int | None) -> FeaturesResponse:
+    async def build_features(self, symbol: str, lookback: int | None, exchange: str = "NASDAQ") -> FeaturesResponse:
         window = lookback or self._settings.default_lookback
         if window > self._settings.max_lookback:
             raise DataValidationError(
                 error="invalid_lookback",
-                details={
-                    "message": "Lookback exceeds configured maximum",
-                    "max_lookback": self._settings.max_lookback,
-                    "provided": window,
-                },
+                details={"message": "Lookback exceeds configured maximum", "max_lookback": self._settings.max_lookback, "provided": window},
                 status_code=422,
             )
 
-        candles_response = await self._market_data_client.get_candles(symbol=symbol, lookback=window)
+        candles_response = await self._market_data_client.get_candles(symbol=symbol, lookback=window, exchange=exchange)
+        fundamentals_response = await self._market_data_client.get_fundamentals(symbol=symbol, exchange=exchange)
         features = compute_features(
             candles=candles_response.candles,
             ma_window=self._settings.ma_window,
             vol_window=self._settings.vol_window,
+            fundamentals=fundamentals_response.fundamentals,
         )
 
+        degraded = candles_response.data_source == "cache" or candles_response.exchange_status == "degraded"
         return FeaturesResponse(
             symbol=candles_response.symbol,
             window_used=window,
             upstream_latest_timestamp=candles_response.candles[-1].timestamp,
+            degraded_input=degraded,
             features=features,
         )

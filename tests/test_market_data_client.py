@@ -16,6 +16,9 @@ def test_get_candles_raises_for_insufficient_data(monkeypatch) -> None:
 
     async def fake_get_with_retry(path, params):
         return {
+            "schema_version": "1.1",
+            "status": "ok",
+            "exchange": "NASDAQ",
             "symbol": "AAPL",
             "interval": "1m",
             "candles": [

@@ -8,7 +8,7 @@ import pandas as pd
 from app.schemas.features import FeaturesResponse
 from app.services.feature_service import FeatureService
 
-FEATURE_COLUMNS = ["close", "simple_return", "moving_average", "rolling_volatility"]
+FEATURE_COLUMNS = ["close", "simple_return", "moving_average", "rolling_volatility", "return_5d", "zscore_20", "drawdown", "fund_pe_ratio", "fund_pb_ratio", "fund_market_cap"]
 
 
 @dataclass

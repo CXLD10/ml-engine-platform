@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import json
 
 import numpy as np
 
@@ -18,6 +20,8 @@ class TrainingConfig:
     random_state: int
     cv_folds: int
     model_params: dict[str, int | float | str]
+    forecast_horizon: str = "5d"
+    retrain_mode: str = "incremental_daily"
 
 
 class Trainer:
@@ -26,6 +30,8 @@ class Trainer:
         self._registry = registry
 
     async def train(self, config: TrainingConfig, version: str | None = None) -> dict[str, str | dict]:
+        if config.lookback < 252:
+            raise ValueError("Minimum training depth is 252 daily candles")
         build_result = await self._dataset_builder.build(symbols=config.symbols, lookback=config.lookback)
         dataset = build_result.dataset
         if dataset.empty:
@@ -80,6 +86,7 @@ class Trainer:
         feature_stats = {
             col: {"mean": float(dataset[col].mean()), "std": float(dataset[col].std(ddof=0))} for col in FEATURE_COLUMNS
         }
+        feature_schema_hash = hashlib.sha256(json.dumps(FEATURE_COLUMNS).encode("utf-8")).hexdigest()
         metadata = {
             "version": resolved_version,
             "trained_at": trained_at,
@@ -93,6 +100,10 @@ class Trainer:
             "validation_metrics": metrics,
             "dataset_window": build_result.summary,
             "training_feature_stats": feature_stats,
+            "model_version": resolved_version,
+            "feature_schema_hash": feature_schema_hash,
+            "forecast_horizon": config.forecast_horizon,
+            "retrain_mode": config.retrain_mode,
         }
         self._registry.save_model_package(
             version=resolved_version,
