@@ -1,49 +1,94 @@
 # ML Engine Platform
 
-A production-focused machine learning platform for market signal prediction, lifecycle governance, and operational monitoring.
+Production-grade ML control platform for training, inference, model lifecycle governance, and operator observability.
 
-## 1) Project Overview
+## Project Overview
 
-ML Engine Platform provides an end-to-end workflow for feature ingestion, model training/inference, governance, monitoring, and operator control. Phase 5 adds a professional web dashboard, backend hardening, Cloud Run readiness, and deployment-grade documentation.
+ML Engine Platform delivers an end-to-end workflow for market-data-based modeling:
 
-## 2) Architecture Summary
+- data ingestion + deterministic feature engineering
+- supervised training + online inference
+- model registry and activation workflows
+- drift/freshness/latency monitoring
+- audit logging and admin control-plane operations
+- operator dashboard for monitoring and interventions
 
-- **Backend API (FastAPI)**
-  - Market data integration
-  - Feature engineering
-  - Training + inference
-  - Model registry + activation
-  - Drift/freshness/latency monitoring
-  - Audit logging + admin control plane
-- **Frontend Dashboard (Next.js App Router)**
-  - Overview KPIs
-  - Prediction exploration
-  - Model management actions
-  - Monitoring visualizations
-- **Storage**
-  - Local artifacts for model files, training history, and prediction audit logs (mount as persistent volume in production)
+This repository includes both backend and frontend services, each containerized for Google Cloud Run.
 
-## 3) Phase Progression (1–5)
+---
 
-- **Phase 1:** Market Data Client + Feature Engineering Pipeline
-- **Phase 2:** Training, Inference, Model Registry
-- **Phase 3:** Drift Detection, Monitoring, Audit Logging
-- **Phase 4:** Async Retraining, Batch Prediction, Control Plane, Docker Hardening
-- **Phase 5:** Professional Dashboard UI, Final Backend Hardening, Cloud Run Readiness, Production Documentation
+## Architecture
 
-## 4) Feature List
+### Backend (FastAPI)
 
-- Public inference APIs (`/predict`, `/predict/batch`)
-- Model discovery and activation
-- Drift/freshness/latency monitoring endpoints
-- Admin retraining controls (API key protected)
-- Structured JSON logging + request IDs
-- CORS and centralized API error envelopes
-- Health and readiness probes (`/health`, `/ready`)
-- Production-ready backend and frontend containers
-- Professional dashboard with responsive charts/cards
+Core responsibilities:
 
-## 5) How to Run Locally
+- Market data client integration
+- Feature pipeline and dataset builder
+- Model training and prediction serving
+- Model registry, version activation, and history
+- Monitoring APIs for drift/freshness/latency
+- Audit and admin endpoints
+
+### Frontend (Next.js App Router)
+
+Operator dashboard with four primary areas:
+
+- Overview
+- Prediction Explorer
+- Model Management
+- Monitoring
+
+### Persistent Model Storage (Cloud-ready)
+
+`MODEL_REGISTRY_DIR` now supports:
+
+- local filesystem path (e.g., `artifacts/models`) for local dev
+- GCS URI (e.g., `gs://ml-engine-platform-models-fintech-labs-123/models`) for durable Cloud Run persistence
+
+> Use GCS in production so versions (`v1`, `v2`, `v3`...) survive scale-to-zero, restarts, and new revisions.
+
+---
+
+## Tech Stack
+
+- **Backend:** Python, FastAPI, Pydantic, NumPy, Pandas
+- **ML:** custom linear regressor training pipeline
+- **Frontend:** Next.js (App Router), TypeScript, Tailwind CSS, Recharts, Axios
+- **Infra:** Docker, Google Cloud Run, Artifact Registry, Google Cloud Storage
+
+---
+
+## API Surface (high-value endpoints)
+
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+- `GET /health`
+- `GET /ready`
+- `GET /features`
+- `GET /predict?symbol=...`
+- `POST /predict/batch`
+- `GET /models`
+- `POST /models/activate/{version}`
+- `GET /monitoring/drift`
+- `GET /monitoring/history`
+- `GET /monitoring/freshness`
+- `GET /monitoring/latency`
+
+### Admin (requires `X-API-Key`)
+
+> Replace placeholders (`PROJECT_ID`, `REGION`, `REPO`, `SERVICE_NAME`) with your values.
+
+All APIs are also exposed under `/api/v1/*`.
+
+---
+
+## Local Development
 
 ### Backend
 
@@ -62,88 +107,221 @@ npm install
 npm run dev
 ```
 
-Frontend default: `http://localhost:3000`
-Backend default: `http://localhost:8000`
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8000`
 
-## 6) How to Deploy to Cloud Run
+---
 
-> Replace placeholders (`PROJECT_ID`, `REGION`, `REPO`, `SERVICE_NAME`) with your values.
+## Production Deployment (Cloud Run + GCS Persistence)
 
-### A. Create Artifact Registry repositories
+The commands below assume:
+
+- project: `fintech-labs-123`
+- region: `us-central1`
+- one artifact registry repo: `ml-engine-repo`
+- backend service: `ml-api`
+- frontend service: `ml-dashboard`
+
+### 1) One-time setup
 
 ```bash
-gcloud artifacts repositories create ml-engine-backend \
+export PROJECT_ID="fintech-labs-123"
+export REGION="us-central1"
+export REPO_NAME="ml-engine-repo"
+export BACKEND_SERVICE="ml-api"
+export FRONTEND_SERVICE="ml-dashboard"
+export BACKEND_IMAGE="ml-api-image"
+export FRONTEND_IMAGE="ml-dashboard-image"
+
+# set your real admin key
+export ADMIN_API_KEY="<your-admin-key>"
+
+gcloud auth login
+gcloud config set project "$PROJECT_ID"
+gcloud config set run/region "$REGION"
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com storage.googleapis.com
+gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+gcloud artifacts repositories create "$REPO_NAME" \
   --repository-format=docker \
-  --location=REGION
-
-gcloud artifacts repositories create ml-engine-frontend \
-  --repository-format=docker \
-  --location=REGION
+  --location="$REGION" \
+  --description="ML Engine Platform images" || true
 ```
 
-### B. Build and push backend container
+### 2) Create GCS bucket for durable model registry
 
 ```bash
-docker build -t REGION-docker.pkg.dev/PROJECT_ID/ml-engine-backend/backend:latest .
-docker push REGION-docker.pkg.dev/PROJECT_ID/ml-engine-backend/backend:latest
+export BUCKET_NAME="ml-engine-platform-models-${PROJECT_ID}"
+
+gcloud storage buckets create "gs://${BUCKET_NAME}" \
+  --project="$PROJECT_ID" \
+  --location="$REGION" \
+  --uniform-bucket-level-access \
+  --default-storage-class=STANDARD
+
+cat > lifecycle.json <<'JSON'
+{
+  "rule": [
+    {
+      "action": { "type": "Delete" },
+      "condition": { "age": 30 }
+    }
+  ]
+}
+JSON
+
+gcloud storage buckets update "gs://${BUCKET_NAME}" --lifecycle-file="lifecycle.json"
+
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/storage.objectAdmin"
 ```
 
-### C. Deploy backend to Cloud Run
+### 3) Build + push backend
 
 ```bash
-gcloud run deploy ml-engine-backend \
-  --image REGION-docker.pkg.dev/PROJECT_ID/ml-engine-backend/backend:latest \
+BACKEND_TAG=$(date +%Y%m%d-%H%M%S)
+docker build --no-cache -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${BACKEND_IMAGE}:${BACKEND_TAG}" .
+docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${BACKEND_IMAGE}:${BACKEND_TAG}"
+```
+
+### 4) Deploy backend (with durable `MODEL_REGISTRY_DIR`)
+
+```bash
+gcloud run deploy "$BACKEND_SERVICE" \
+  --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${BACKEND_IMAGE}:${BACKEND_TAG}" \
   --platform managed \
-  --region REGION \
+  --region "$REGION" \
   --allow-unauthenticated \
-  --set-env-vars ENV=production,APP_ENV=cloudrun,CORS_ALLOW_ORIGINS=*
+  --port 8080 \
+  --cpu 1 \
+  --memory 512Mi \
+  --concurrency 80 \
+  --min-instances 0 \
+  --max-instances 1 \
+  --set-env-vars "ENV=production,APP_ENV=cloudrun,ADMIN_API_KEY=${ADMIN_API_KEY},DRIFT_THRESHOLD=0.05,MARKET_DATA_BASE_URL=https://market-data-platform-3qp7bblccq-uc.a.run.app,MODEL_REGISTRY_DIR=gs://${BUCKET_NAME}/models,CORS_ALLOW_ORIGINS=*"
+
+BACKEND_URL=$(gcloud run services describe "$BACKEND_SERVICE" --region "$REGION" --format='value(status.url)')
+echo "BACKEND_URL=$BACKEND_URL"
 ```
 
-### D. Build and push frontend container
+### 5) Build + push frontend (with build-time backend URL)
 
 ```bash
-cd frontend
-docker build -t REGION-docker.pkg.dev/PROJECT_ID/ml-engine-frontend/frontend:latest .
-docker push REGION-docker.pkg.dev/PROJECT_ID/ml-engine-frontend/frontend:latest
+FRONTEND_TAG=$(date +%Y%m%d-%H%M%S)
+docker build --no-cache \
+  -f frontend/Dockerfile \
+  --build-arg NEXT_PUBLIC_BACKEND_URL="$BACKEND_URL" \
+  -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${FRONTEND_IMAGE}:${FRONTEND_TAG}" \
+  frontend
+
+docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${FRONTEND_IMAGE}:${FRONTEND_TAG}"
 ```
 
-### E. Deploy frontend to Cloud Run
+### 6) Deploy frontend
 
 ```bash
-gcloud run deploy ml-engine-frontend \
-  --image REGION-docker.pkg.dev/PROJECT_ID/ml-engine-frontend/frontend:latest \
+gcloud run deploy "$FRONTEND_SERVICE" \
+  --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${FRONTEND_IMAGE}:${FRONTEND_TAG}" \
   --platform managed \
-  --region REGION \
+  --region "$REGION" \
   --allow-unauthenticated \
-  --set-env-vars NEXT_PUBLIC_BACKEND_URL=https://<BACKEND_CLOUD_RUN_URL>
+  --port 8080 \
+  --cpu 1 \
+  --memory 512Mi \
+  --concurrency 80 \
+  --min-instances 0 \
+  --max-instances 1 \
+  --set-env-vars "NEXT_PUBLIC_BACKEND_URL=${BACKEND_URL}"
+
+FRONTEND_URL=$(gcloud run services describe "$FRONTEND_SERVICE" --region "$REGION" --format='value(status.url)')
+echo "FRONTEND_URL=$FRONTEND_URL"
 ```
 
-### F. HTTPS
+### 7) Tighten CORS to frontend URL
 
-Cloud Run services are HTTPS-enabled by default on generated URLs. For custom domains, map domain via Cloud Run domain mapping and provision managed certificates.
+```bash
+gcloud run services update "$BACKEND_SERVICE" \
+  --region "$REGION" \
+  --update-env-vars "CORS_ALLOW_ORIGINS=${FRONTEND_URL}"
+```
 
-## 7) Live URL Placeholder
+---
 
-- Backend URL: `https://<backend-service-url>`
-- Frontend URL: `https://<frontend-service-url>`
+## Train and Persist `v1`, `v2`, `v3`
 
-## 8) Screenshots Placeholder
+```bash
+# v1
+curl -s -X POST "$BACKEND_URL/admin/train" -H "X-API-Key: $ADMIN_API_KEY" | jq
+curl -s "$BACKEND_URL/admin/train/status" -H "X-API-Key: $ADMIN_API_KEY" | jq
+curl -s "$BACKEND_URL/models" | jq
 
-- Dashboard overview: _add screenshot_
-- Prediction explorer: _add screenshot_
-- Monitoring panel: _add screenshot_
+# v2
+curl -s -X POST "$BACKEND_URL/admin/train" -H "X-API-Key: $ADMIN_API_KEY" | jq
+curl -s "$BACKEND_URL/admin/train/status" -H "X-API-Key: $ADMIN_API_KEY" | jq
+curl -s "$BACKEND_URL/models" | jq
 
-## 9) Tech Stack Summary
+# v3
+curl -s -X POST "$BACKEND_URL/admin/train" -H "X-API-Key: $ADMIN_API_KEY" | jq
+curl -s "$BACKEND_URL/admin/train/status" -H "X-API-Key: $ADMIN_API_KEY" | jq
+curl -s "$BACKEND_URL/models" | jq
+```
 
-- **Backend:** Python, FastAPI, Pydantic, scikit-learn
-- **Frontend:** Next.js (App Router), TypeScript, Tailwind CSS, Recharts, Axios
-- **Containers:** Docker multi-stage builds, non-root runtime
-- **Cloud:** Google Cloud Run + Artifact Registry
+### Persistence check across restart/revision
 
-## 10) Future Improvements
+```bash
+# force a new backend revision
+BACKEND_TAG2=$(date +%Y%m%d-%H%M%S)
+docker build --no-cache -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${BACKEND_IMAGE}:${BACKEND_TAG2}" .
+docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${BACKEND_IMAGE}:${BACKEND_TAG2}"
 
-- Managed DB/warehouse for training and observability history
-- Background queue worker for retraining orchestration
-- Alerting integrations (PagerDuty/Slack)
-- Role-based access control for admin routes
-- Canary releases and automated model rollback policies
+gcloud run deploy "$BACKEND_SERVICE" \
+  --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${BACKEND_IMAGE}:${BACKEND_TAG2}" \
+  --platform managed \
+  --region "$REGION" \
+  --allow-unauthenticated \
+  --port 8080 \
+  --cpu 1 \
+  --memory 512Mi \
+  --concurrency 80 \
+  --min-instances 0 \
+  --max-instances 1 \
+  --set-env-vars "ENV=production,APP_ENV=cloudrun,ADMIN_API_KEY=${ADMIN_API_KEY},DRIFT_THRESHOLD=0.05,MARKET_DATA_BASE_URL=https://market-data-platform-3qp7bblccq-uc.a.run.app,MODEL_REGISTRY_DIR=gs://${BUCKET_NAME}/models,CORS_ALLOW_ORIGINS=${FRONTEND_URL}"
+
+BACKEND_URL=$(gcloud run services describe "$BACKEND_SERVICE" --region "$REGION" --format='value(status.url)')
+curl -s "$BACKEND_URL/models" | jq
+```
+
+If persistence is correct, `available_versions` should still include `v1`, `v2`, `v3` and `active_version` should remain populated.
+
+---
+
+## Verification Checklist
+
+```bash
+curl -s "$BACKEND_URL/health" | jq
+curl -s "$BACKEND_URL/ready" | jq
+curl -s "$BACKEND_URL/models" | jq
+curl -s "$BACKEND_URL/predict?symbol=AAPL" | jq
+curl -I "$FRONTEND_URL"
+```
+
+---
+
+## Logging
+
+```bash
+gcloud run services logs read "$BACKEND_SERVICE" --region "$REGION" --limit=150
+gcloud run services logs read "$FRONTEND_SERVICE" --region "$REGION" --limit=150
+```
+
+---
+
+## Notes
+
+- Cloud Run local filesystem is ephemeral. Use `MODEL_REGISTRY_DIR=gs://...` for durable models.
+- Frontend must be built with `--build-arg NEXT_PUBLIC_BACKEND_URL=...` to avoid fallback to `http://localhost:8000`.
+- Use the canonical service URLs from `gcloud run services describe ... --format='value(status.url)'`.
