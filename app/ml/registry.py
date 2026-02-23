@@ -1,3 +1,11 @@
-from app.registry.lifecycle import ModelLifecycleRegistry as ModelRegistry
+from app.registry.lifecycle import GCSModelLifecycleRegistry, ModelLifecycleRegistry
 
-__all__ = ["ModelRegistry"]
+
+class ModelRegistry:
+    def __new__(cls, root_dir: str):
+        if root_dir.startswith("gs://"):
+            return GCSModelLifecycleRegistry(root_uri=root_dir)
+        return ModelLifecycleRegistry(root_dir=root_dir)
+
+
+__all__ = ["ModelRegistry", "ModelLifecycleRegistry", "GCSModelLifecycleRegistry"]
